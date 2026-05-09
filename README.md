@@ -1,46 +1,43 @@
 # Survey Service
 
-FastAPI service for survey CRUD, survey answer storage, idempotent answer creation,
-and downstream notifications to user and analytics services.
+## 1. Название и назначение сервиса
 
-## Port
+`survey-service` — микросервис опросов в системе PIUS. Он отвечает за создание и хранение опросов, вопросы внутри опросов, прием ответов пользователей и отправку событий в другие сервисы.
 
-- HTTP: `8081`
+Основные функции:
 
-## Environment
+- CRUD для опросов;
+- хранение категории, статуса и структуры вопросов;
+- прием и валидация ответов;
+- идемпотентное сохранение ответов через `Idempotency-Key`;
+- подсчет количества ответов по опросу;
+- отправка событий в `user-service` и `analytics-service`.
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `DATABASE_URL` | `sqlite:///./survey.db` | SQLite database URL |
-| `USER_SERVICE_URL` | `http://localhost:8080` | Base URL for user-service |
-| `ANALYTICS_SERVICE_URL` | `http://localhost:8082` | Base URL for analytics-service |
-| `INTERNAL_API_KEY` | `change-me` | Token for internal service calls |
-| `HTTP_TIMEOUT_SECONDS` | `5.0` | Outgoing HTTP timeout |
+## 2. Архитектура и зависимости
 
-## HTTP API
+Технологии:
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/health` | Healthcheck |
-| `POST` | `/surveys` | Create a survey |
-| `GET` | `/surveys` | List surveys, optionally filtered by category |
-| `GET` | `/surveys/{survey_id}` | Read a survey |
-| `PUT` | `/surveys/{survey_id}` | Update a survey |
-| `DELETE` | `/surveys/{survey_id}` | Delete a survey |
-| `POST` | `/answers` | Store an answer and notify downstream services |
-| `GET` | `/surveys/{survey_id}/answers/count` | Count answers for a survey |
-| `GET` | `/users/{user_id}/surveys` | List surveys created by a user |
+- Python 3.11;
+- FastAPI и Uvicorn;
+- Pydantic;
+- SQLAlchemy;
+- SQLite;
+- Alembic;
+- HTTPX;
+- pytest и FastAPI TestClient.
 
-## Local Run
+Взаимодействие с микросервисами:
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python -m pip install -r requirements.txt
-.\.venv\Scripts\alembic upgrade head
-.\.venv\Scripts\python -m uvicorn app.main:app --host 0.0.0.0 --port 8081
-```
+- вызывает `user-service`: `POST /internal/events/answer-created` для начисления XP;
+- вызывает `analytics-service`: `POST /internal/events/submission-created` для обновления аналитики;
+- предоставляет `analytics-service` эндпоинты `GET /surveys/{id}/answers/count` и `GET /users/{user_id}/surveys`;
+- внутренние вызовы защищены `INTERNAL_API_KEY`.
 
-## Docker
+Внешние сервисы не используются. Redis, Kafka, S3 и внешняя PostgreSQL в текущей версии не требуются.
+
+## 3. Способы запуска сервиса
+
+### Через Docker
 
 ```powershell
 docker build -t survey-service .
@@ -52,23 +49,61 @@ docker run --rm -p 8081:8081 `
   survey-service
 ```
 
-## Example `POST /answers`
+### Без Docker
 
-```json
-{
-  "survey_id": 1,
-  "respondent_id": 42,
-  "answers": [
-    {"name": "experience", "value": "Great"},
-    {"name": "language", "value": "python"}
-  ]
-}
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python -m pip install -r requirements.txt
+.\.venv\Scripts\alembic upgrade head
+.\.venv\Scripts\python -m uvicorn app.main:app --host 0.0.0.0 --port 8081
 ```
 
-## Tests
+### Переменные окружения
+
+| Переменная | По умолчанию | Назначение |
+| --- | --- | --- |
+| `DATABASE_URL` | `sqlite:///./survey.db` | SQLite база данных |
+| `USER_SERVICE_URL` | `http://localhost:8080` | URL сервиса пользователей |
+| `ANALYTICS_SERVICE_URL` | `http://localhost:8082` | URL сервиса аналитики |
+| `INTERNAL_API_KEY` | `change-me` | ключ внутренних API-вызовов |
+| `HTTP_TIMEOUT_SECONDS` | `5.0` | таймаут исходящих HTTP-запросов |
+
+Для запуска всей системы используется общий репозиторий `bozvan/PIUS` и команда `docker compose up --build -d`.
+
+## 4. API документация
+
+После запуска Swagger доступен по адресу:
+
+- `http://localhost:8081/docs`
+- `http://localhost:8081/openapi.json`
+
+Основные эндпоинты:
+
+| Метод | Путь | Описание |
+| --- | --- | --- |
+| `GET` | `/health` | проверка работоспособности |
+| `POST` | `/surveys` | создание опроса |
+| `GET` | `/surveys` | список опросов, фильтр по категории |
+| `GET` | `/surveys/{survey_id}` | получение опроса |
+| `PUT` | `/surveys/{survey_id}` | обновление опроса |
+| `DELETE` | `/surveys/{survey_id}` | удаление опроса |
+| `POST` | `/answers` | сохранение ответа и отправка событий |
+| `GET` | `/surveys/{survey_id}/answers/count` | количество ответов |
+| `GET` | `/users/{user_id}/surveys` | опросы пользователя |
+
+## 5. Как тестировать
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python -m pip install -r requirements.txt
 .\.venv\Scripts\python -m pytest
 ```
+
+## 6. Контакты и поддержка
+
+Автор сервиса: Скалеух И.
+
+Поддержка:
+
+- GitHub Issues: https://github.com/isco25/survey-service/issues
+- GitHub: https://github.com/isco25
