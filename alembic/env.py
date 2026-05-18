@@ -17,7 +17,7 @@ target_metadata = Base.metadata
 
 
 def get_database_url() -> str:
-    return os.getenv("DATABASE_URL", "sqlite:///./survey.db")
+    return os.getenv("DATABASE_URL", "sqlite:///./data/survey.db")
 
 
 def run_migrations_offline() -> None:

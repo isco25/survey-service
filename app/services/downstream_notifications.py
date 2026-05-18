@@ -15,17 +15,45 @@ def notify_downstream_services(answer: AnswerRead, survey: Survey) -> None:
     settings = get_settings()
     question_ids = _extract_question_ids(answer=answer, survey=survey)
 
-    _post_internal_event(
-        base_url=settings.user_service_url,
-        path="/internal/events/answer-created",
-        payload={
+    question_index_map = {}
+    for idx, raw_q in enumerate(survey.questions, start=1):
+        q = SurveyQuestion.model_validate(raw_q)
+        question_index_map[q.name] = idx
+
+    for answer_item in answer.answers:
+        question_id = question_index_map.get(answer_item.name)
+        if question_id is None:
+            logger.warning(f"Unknown question {answer_item.name} in answer {answer.id}")
+            continue
+
+        payload = {
             "user_id": answer.respondent_id,
-            "answer_id": answer.id,
-            "question_id": 0,
+            "answer_id": answer.id, 
+            "question_id": question_id,
             "survey_id": answer.survey_id,
-        },
-        idempotency_key=f"survey-answer:{answer.id}:user-xp",
-    )
+        }
+        idem_key = f"survey-answer:{answer.id}:{answer_item.name}"
+
+        # user‑service
+        _post_internal_event(
+            base_url=settings.user_service_url,
+            path="/internal/events/answer-created",
+            payload=payload,
+            idempotency_key=f"{idem_key}:user-xp",
+        )
+        # analytics‑service
+        _post_internal_event(
+            base_url=settings.analytics_service_url,
+            path="/internal/events/answer-created",
+            payload={
+                "user_id": answer.respondent_id,
+                "answer_id": str(answer.id),
+                "question_id": question_id,
+                "survey_id": answer.survey_id,
+            },
+            idempotency_key=f"survey-answer:{answer.id}:{answer_item.name}:analytics-answer",
+        )
+
     _post_internal_event(
         base_url=settings.analytics_service_url,
         path="/internal/events/submission-created",
