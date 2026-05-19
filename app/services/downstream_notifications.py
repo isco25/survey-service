@@ -28,7 +28,7 @@ def notify_downstream_services(answer: AnswerRead, survey: Survey) -> None:
 
         payload = {
             "user_id": answer.respondent_id,
-            "answer_id": answer.id, 
+            "answer_id": answer.id,
             "question_id": question_id,
             "survey_id": answer.survey_id,
         }

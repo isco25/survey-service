@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from app.schemas import AnswerRead
 from fastapi.testclient import TestClient
+
+from app.schemas import AnswerRead
 
 
 def build_survey_payload(

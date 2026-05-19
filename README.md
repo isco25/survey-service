@@ -41,7 +41,7 @@
 
 ```powershell
 docker build -t survey-service .
-docker run --rm -p 8081:8081 `
+docker run --rm -p 8001:8001 `
   -e DATABASE_URL=sqlite:///./data/survey.db `
   -e USER_SERVICE_URL=http://host.docker.internal:8080 `
   -e ANALYTICS_SERVICE_URL=http://host.docker.internal:8082 `
@@ -52,17 +52,18 @@ docker run --rm -p 8081:8081 `
 ### Без Docker
 
 ```powershell
+cd D:\survey-service
 python -m venv .venv
 .\.venv\Scripts\python -m pip install -r requirements.txt
-.\.venv\Scripts\alembic upgrade head
-.\.venv\Scripts\python -m uvicorn app.main:app --host 0.0.0.0 --port 8081
+.\.venv\Scripts\python -m alembic upgrade head
+.\.venv\Scripts\python -m uvicorn app.main:app --host 127.0.0.1 --port 8001
 ```
 
 ### Переменные окружения
 
 | Переменная | По умолчанию | Назначение |
 | --- | --- | --- |
-| `DATABASE_URL` | `sqlite:///./survey.db` | SQLite база данных |
+| `DATABASE_URL` | `sqlite:///./data/survey.db` | SQLite база данных |
 | `USER_SERVICE_URL` | `http://localhost:8080` | URL сервиса пользователей |
 | `ANALYTICS_SERVICE_URL` | `http://localhost:8082` | URL сервиса аналитики |
 | `INTERNAL_API_KEY` | `change-me` | ключ внутренних API-вызовов |
@@ -74,8 +75,8 @@ python -m venv .venv
 
 После запуска Swagger доступен по адресу:
 
-- `http://localhost:8081/docs`
-- `http://localhost:8081/openapi.json`
+- `http://localhost:8001/docs`
+- `http://localhost:8001/openapi.json`
 
 Основные эндпоинты:
 
@@ -97,6 +98,11 @@ python -m venv .venv
 python -m venv .venv
 .\.venv\Scripts\python -m pip install -r requirements.txt
 .\.venv\Scripts\python -m pytest
+```
+```
+ruff check .
+
+ruff format .
 ```
 
 ## 6. Контакты и поддержка
