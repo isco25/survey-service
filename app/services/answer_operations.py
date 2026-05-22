@@ -67,7 +67,7 @@ def validate_answers_against_survey(
     unknown_questions = [name for name in submitted_map if name not in question_map]
     if unknown_questions:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=f"Unknown question(s): {', '.join(sorted(unknown_questions))}",
                 )
 
@@ -79,7 +79,7 @@ def validate_answers_against_survey(
         ]
         if missing_required:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Missing required answer(s): {', '.join(sorted(missing_required))}",
             )
 
@@ -88,48 +88,49 @@ def validate_answers_against_survey(
         if question.type == "text":
             if not isinstance(value, str) or not value.strip():
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=f"Question '{question_name}' expects a non-empty text value",
                 )
             if question.validation == "email" and not EMAIL_PATTERN.fullmatch(value.strip()):
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=f"Question '{question_name}' expects a valid email",
                 )
             if question.validation == "phone" and not PHONE_PATTERN.fullmatch(value.strip()):
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=f"Question '{question_name}' expects a valid phone",
                 )
             continue
 
+
         if question.type == "single_choice":
             if not isinstance(value, str) or value not in question.options:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=f"Question '{question_name}' expects one of: {', '.join(question.options)}",
                 )
             continue
 
         if not isinstance(value, list) or not value:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Question '{question_name}' expects a non-empty list of options",
             )
         if any(not isinstance(option, str) for option in value):
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Question '{question_name}' expects string options only",
             )
         if len(set(value)) != len(value):
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Question '{question_name}' contains duplicate options",
             )
         invalid_options = [option for option in value if option not in question.options]
         if invalid_options:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=(
                     f"Question '{question_name}' contains invalid option(s): "
                     f"{', '.join(invalid_options)}"
@@ -184,6 +185,7 @@ def save_answer(
         idempotency_key.strip() if idempotency_key else f"{business_key}:{request_hash}"
     )
     normalized_answers = [answer.model_dump(mode="json") for answer in payload.answers]
+
 
     record = get_idempotency_record(db, normalized_source_service, normalized_key)
     if record is not None:
