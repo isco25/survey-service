@@ -15,9 +15,18 @@ app = FastAPI(
 register_exception_handlers(app)
 
 
-@app.get("/api/v1/health", summary="Service healthcheck")
-def healthcheck() -> dict[str, object]:
+def health_payload() -> dict[str, object]:
     return success_response({"status": "ok"})
+
+
+@app.get("/api/v1/health", summary="Service healthcheck")
+def healthcheck_v1() -> dict[str, object]:
+    return health_payload()
+
+
+@app.get("/health", include_in_schema=False)
+def healthcheck_legacy() -> dict[str, object]:
+    return health_payload()
 
 
 app.include_router(surveys_router)
