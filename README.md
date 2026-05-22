@@ -1,43 +1,82 @@
 # Survey Service
 
-## 1. Название и назначение сервиса
+`survey-service` отвечает за создание и хранение опросов, приём ответов, валидацию, бонусные вопросы, изображения у опросов и сервисные рекомендации.
 
-`survey-service` — микросервис опросов в системе PIUS. Он отвечает за создание и хранение опросов, вопросы внутри опросов, прием ответов пользователей и отправку событий в другие сервисы.
+## Возможности
 
-Основные функции:
+- создание, обновление, удаление и получение опросов
+- поиск опросов через `POST /api/v1/surveys:search`
+- изображения у опросов через поле `image_url`
+- бонусные вопросы через флаг `is_bonus` с дополнительным `+2 XP`
+- валидация текстовых ответов по regex для `email` и `phone`
+- идемпотентная отправка ответов
+- частичное дозаполнение ответов после добавления новых вопросов
+- аналитические endpoints для популярных опросов и рекомендаций
 
-- CRUD для опросов;
-- хранение категории, статуса и структуры вопросов;
-- прием и валидация ответов;
-- идемпотентное сохранение ответов через `Idempotency-Key`;
-- подсчет количества ответов по опросу;
-- отправка событий в `user-service` и `analytics-service`.
+## API
 
-## 2. Архитектура и зависимости
+Сервис приведён к `API Design Guide`: https://docs.ensi.tech/guidelines/api
 
-Технологии:
+- базовый префикс: `/api/v1`
+- формат JSON-ответов: `data`, `errors`, `meta`
 
-- Python 3.11;
-- FastAPI и Uvicorn;
-- Pydantic;
-- SQLAlchemy;
-- SQLite;
-- Alembic;
-- HTTPX;
-- pytest и FastAPI TestClient.
+Основные маршруты:
 
-Взаимодействие с микросервисами:
+| Метод | Путь | Назначение |
+| --- | --- | --- |
+| `GET` | `/api/v1/health` | healthcheck |
+| `POST` | `/api/v1/surveys` | создать опрос |
+| `POST` | `/api/v1/surveys:search` | поиск опросов |
+| `GET` | `/api/v1/surveys/{survey_id}` | получить опрос |
+| `PUT` | `/api/v1/surveys/{survey_id}` | обновить опрос |
+| `DELETE` | `/api/v1/surveys/{survey_id}` | удалить опрос |
+| `POST` | `/api/v1/surveys/{survey_id}/questions` | добавить вопрос в опрос |
+| `GET` | `/api/v1/surveys/{survey_id}/answer-stats` | статистика по числу ответов |
+| `POST` | `/api/v1/surveys:popular` | популярные опросы |
+| `POST` | `/api/v1/surveys:recommendations` | рекомендации опросов |
+| `POST` | `/api/v1/answers` | отправить ответ |
+| `POST` | `/api/v1/users/{user_id}/surveys:search` | список опросов автора |
 
-- вызывает `user-service`: `POST /internal/events/answer-created` для начисления XP;
-- вызывает `analytics-service`: `POST /internal/events/submission-created` для обновления аналитики;
-- предоставляет `analytics-service` эндпоинты `GET /surveys/{id}/answers/count` и `GET /users/{user_id}/surveys`;
-- внутренние вызовы защищены `INTERNAL_API_KEY`.
+Пример создания опроса:
 
-Внешние сервисы не используются. Redis, Kafka, S3 и внешняя PostgreSQL в текущей версии не требуются.
+```json
+{
+  "author_id": 7,
+  "title": "Python Survey",
+  "description": "Basic questionnaire",
+  "image_url": "https://example.com/survey.png",
+  "category": "tech",
+  "status": "active",
+  "questions": [
+    {
+      "name": "experience",
+      "text": "How was your experience?",
+      "type": "text",
+      "required": true,
+      "is_bonus": true
+    },
+    {
+      "name": "email",
+      "text": "Email",
+      "type": "text",
+      "required": true,
+      "validation": "email"
+    }
+  ]
+}
+```
 
-## 3. Способы запуска сервиса
+## Интеграции
 
-### Через Docker
+- отправляет XP-события в `user-service` по `POST /api/v1/internal-events:answer-created`
+- отправляет аналитические события в `analytics-service` по:
+  - `POST /api/v1/internal-events:answer-created`
+  - `POST /api/v1/internal-events:submission-created`
+- отдаёт `analytics-service` список опросов автора и статистику по ответам
+
+## Запуск
+
+Через Docker:
 
 ```powershell
 docker build -t survey-service .
@@ -49,67 +88,43 @@ docker run --rm -p 8001:8001 `
   survey-service
 ```
 
-### Без Docker
+Локально:
 
 ```powershell
-cd D:\survey-service
 python -m venv .venv
 .\.venv\Scripts\python -m pip install -r requirements.txt
 .\.venv\Scripts\python -m alembic upgrade head
 .\.venv\Scripts\python -m uvicorn app.main:app --host 127.0.0.1 --port 8001
 ```
 
-### Переменные окружения
+Переменные окружения:
 
 | Переменная | По умолчанию | Назначение |
 | --- | --- | --- |
 | `DATABASE_URL` | `sqlite:///./data/survey.db` | SQLite база данных |
-| `USER_SERVICE_URL` | `http://localhost:8080` | URL сервиса пользователей |
-| `ANALYTICS_SERVICE_URL` | `http://localhost:8082` | URL сервиса аналитики |
-| `INTERNAL_API_KEY` | `change-me` | ключ внутренних API-вызовов |
-| `HTTP_TIMEOUT_SECONDS` | `5.0` | таймаут исходящих HTTP-запросов |
+| `USER_SERVICE_URL` | `http://localhost:8080` | адрес `user-service` |
+| `ANALYTICS_SERVICE_URL` | `http://localhost:8082` | адрес `analytics-service` |
+| `INTERNAL_API_KEY` | `change-me` | ключ внутренних API |
+| `HTTP_TIMEOUT_SECONDS` | `5.0` | timeout исходящих HTTP-запросов |
 
-Для запуска всей системы используется общий репозиторий `bozvan/PIUS` и команда `docker compose up --build -d`.
-
-## 4. API документация
-
-После запуска Swagger доступен по адресу:
-
-- `http://localhost:8001/docs`
-- `http://localhost:8001/openapi.json`
-
-Основные эндпоинты:
-
-| Метод | Путь | Описание |
-| --- | --- | --- |
-| `GET` | `/health` | проверка работоспособности |
-| `POST` | `/surveys` | создание опроса |
-| `GET` | `/surveys` | список опросов, фильтр по категории |
-| `GET` | `/surveys/{survey_id}` | получение опроса |
-| `PUT` | `/surveys/{survey_id}` | обновление опроса |
-| `DELETE` | `/surveys/{survey_id}` | удаление опроса |
-| `POST` | `/answers` | сохранение ответа и отправка событий |
-| `GET` | `/surveys/{survey_id}/answers/count` | количество ответов |
-| `GET` | `/users/{user_id}/surveys` | опросы пользователя |
-
-## 5. Как тестировать
+## Тесты
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\python -m pip install -r requirements.txt
-.\.venv\Scripts\python -m pytest
-```
-```
-ruff check .
-
-ruff format .
+python -m pytest
 ```
 
-## 6. Контакты и поддержка
+## Git hooks
 
-Автор сервиса: Скалеух И.
+В репозиторий добавлен `pre-push` hook, который запускает тесты.
 
-Поддержка:
+Установка внутри `survey-service`:
 
-- GitHub Issues: https://github.com/isco25/survey-service/issues
-- GitHub: https://github.com/isco25
+```powershell
+git config core.hooksPath .githooks
+```
+
+Либо из корня монорепозитория:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ..\..\scripts\install-git-hooks.ps1
+```

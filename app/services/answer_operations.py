@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -12,16 +13,12 @@ from app.schemas import AnswerCreate, AnswerItem, AnswerRead, SurveyQuestion
 
 ANSWER_OPERATION = "submit_answer"
 DEFAULT_SOURCE_SERVICE = "api-gateway"
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+PHONE_PATTERN = re.compile(r"^\+?[0-9\s\-()]{7,20}$")
 
 
 def build_business_key(survey_id: int, respondent_id: int) -> str:
     return f"survey:{survey_id}:respondent:{respondent_id}"
-
-
-def build_idempotency_key(payload: AnswerCreate, idempotency_key: str | None) -> str:
-    if idempotency_key:
-        return idempotency_key.strip()
-    return build_business_key(payload.survey_id, payload.respondent_id)
 
 
 def build_request_hash(payload: AnswerCreate, source_service: str) -> str:
@@ -29,6 +26,7 @@ def build_request_hash(payload: AnswerCreate, source_service: str) -> str:
         "survey_id": payload.survey_id,
         "respondent_id": payload.respondent_id,
         "source_service": source_service,
+        "duration_seconds": payload.duration_seconds,
         "answers": [answer.model_dump(mode="json") for answer in payload.answers],
     }
     serialized = json.dumps(
@@ -51,7 +49,12 @@ def build_question_map(survey: Survey) -> dict[str, SurveyQuestion]:
     }
 
 
-def validate_answers_against_survey(survey: Survey, submitted_answers: list[AnswerItem]) -> None:
+def validate_answers_against_survey(
+    survey: Survey,
+    submitted_answers: list[AnswerItem],
+    *,
+    allow_partial: bool = False,
+) -> None:
     if survey.status != "active":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -63,59 +66,70 @@ def validate_answers_against_survey(survey: Survey, submitted_answers: list[Answ
 
     unknown_questions = [name for name in submitted_map if name not in question_map]
     if unknown_questions:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Unknown question(s): {', '.join(sorted(unknown_questions))}",
-        )
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=f"Unknown question(s): {', '.join(sorted(unknown_questions))}",
+                )
 
-    missing_required = [
-        question.name
-        for question in question_map.values()
-        if question.required and question.name not in submitted_map
-    ]
-    if missing_required:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Missing required answer(s): {', '.join(sorted(missing_required))}",
-        )
+    if not allow_partial:
+        missing_required = [
+            question.name
+            for question in question_map.values()
+            if question.required and question.name not in submitted_map
+        ]
+        if missing_required:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Missing required answer(s): {', '.join(sorted(missing_required))}",
+            )
 
     for question_name, value in submitted_map.items():
         question = question_map[question_name]
         if question.type == "text":
             if not isinstance(value, str) or not value.strip():
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=f"Question '{question_name}' expects a non-empty text value",
+                )
+            if question.validation == "email" and not EMAIL_PATTERN.fullmatch(value.strip()):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=f"Question '{question_name}' expects a valid email",
+                )
+            if question.validation == "phone" and not PHONE_PATTERN.fullmatch(value.strip()):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=f"Question '{question_name}' expects a valid phone",
                 )
             continue
 
         if question.type == "single_choice":
             if not isinstance(value, str) or value not in question.options:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=f"Question '{question_name}' expects one of: {', '.join(question.options)}",
                 )
             continue
 
         if not isinstance(value, list) or not value:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Question '{question_name}' expects a non-empty list of options",
             )
         if any(not isinstance(option, str) for option in value):
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Question '{question_name}' expects string options only",
             )
         if len(set(value)) != len(value):
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Question '{question_name}' contains duplicate options",
             )
         invalid_options = [option for option in value if option not in question.options]
         if invalid_options:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=(
                     f"Question '{question_name}' contains invalid option(s): "
                     f"{', '.join(invalid_options)}"
@@ -160,13 +174,15 @@ def save_answer(
     payload: AnswerCreate,
     idempotency_key: str | None,
     source_service: str | None,
-) -> tuple[Answer | AnswerRead, int]:
+) -> tuple[Answer | AnswerRead, int, float, list[str]]:
     normalized_source_service = (
         source_service or DEFAULT_SOURCE_SERVICE
     ).strip() or DEFAULT_SOURCE_SERVICE
-    normalized_key = build_idempotency_key(payload, idempotency_key)
     request_hash = build_request_hash(payload, normalized_source_service)
     business_key = build_business_key(payload.survey_id, payload.respondent_id)
+    normalized_key = (
+        idempotency_key.strip() if idempotency_key else f"{business_key}:{request_hash}"
+    )
     normalized_answers = [answer.model_dump(mode="json") for answer in payload.answers]
 
     record = get_idempotency_record(db, normalized_source_service, normalized_key)
@@ -184,9 +200,9 @@ def save_answer(
         if record.status == OperationStatus.COMPLETED.value:
             answer = db.get(Answer, record.resource_id) if record.resource_id is not None else None
             if answer is not None:
-                return answer, status.HTTP_200_OK
+                return answer, status.HTTP_200_OK, 0.0, []
             if record.response_body is not None:
-                return AnswerRead.model_validate(record.response_body), status.HTTP_200_OK
+                return AnswerRead.model_validate(record.response_body), status.HTTP_200_OK, 0.0, []
 
         record.status = OperationStatus.IN_PROGRESS.value
         record.error_message = None
@@ -211,25 +227,41 @@ def save_answer(
         db.commit()
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Survey not found")
 
-    validate_answers_against_survey(survey, payload.answers)
-
     existing_answer = db.scalar(select(Answer).where(Answer.business_key == business_key))
     if existing_answer is not None:
         if existing_answer.answers == normalized_answers:
             complete_record(record, existing_answer, status.HTTP_200_OK)
             db.commit()
-            return existing_answer, status.HTTP_200_OK
+            return existing_answer, status.HTTP_200_OK, 0.0, []
 
-        fail_record(
-            record,
-            "Respondent has already submitted an answer for this survey",
-            status.HTTP_409_CONFLICT,
-        )
+        existing_by_name = {item["name"]: item["value"] for item in existing_answer.answers}
+        incoming_by_name = {item["name"]: item["value"] for item in normalized_answers}
+        conflicting_names = [
+            name
+            for name, value in incoming_by_name.items()
+            if name in existing_by_name and existing_by_name[name] != value
+        ]
+        new_answers = [item for item in normalized_answers if item["name"] not in existing_by_name]
+        if conflicting_names or not new_answers:
+            fail_record(
+                record,
+                "Respondent has already submitted an answer for this survey",
+                status.HTTP_409_CONFLICT,
+            )
+            db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Respondent has already submitted an answer for this survey",
+            )
+
+        validate_answers_against_survey(survey, payload.answers, allow_partial=True)
+        existing_answer.answers = [*existing_answer.answers, *new_answers]
+        complete_record(record, existing_answer, status.HTTP_200_OK)
         db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Respondent has already submitted an answer for this survey",
-        )
+        db.refresh(existing_answer)
+        return existing_answer, status.HTTP_200_OK, 2.5, [item["name"] for item in new_answers]
+
+    validate_answers_against_survey(survey, payload.answers)
 
     answer = Answer(
         survey_id=payload.survey_id,
@@ -244,4 +276,4 @@ def save_answer(
     complete_record(record, answer, status.HTTP_201_CREATED)
     db.commit()
     db.refresh(answer)
-    return answer, status.HTTP_201_CREATED
+    return answer, status.HTTP_201_CREATED, 5.0, [item["name"] for item in normalized_answers]

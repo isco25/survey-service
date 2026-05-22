@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 SurveyStatus = Literal["draft", "active", "closed"]
 QuestionType = Literal["text", "single_choice", "multiple_choice"]
+ValidationType = Literal["email", "phone"]
 
 
 def normalize_category(value: str) -> str:
@@ -19,6 +20,8 @@ class SurveyQuestion(BaseModel):
     type: QuestionType
     options: list[str] = Field(default_factory=list)
     required: bool = True
+    is_bonus: bool = False
+    validation: ValidationType | None = None
 
     @field_validator("name")
     @classmethod
@@ -53,6 +56,7 @@ class SurveyBase(BaseModel):
     author_id: int = Field(..., gt=0)
     title: str = Field(..., min_length=1, max_length=255)
     description: str | None = None
+    image_url: str | None = None
     category: str = Field(..., min_length=1, max_length=64)
     questions: list[SurveyQuestion] = Field(..., min_length=1)
     status: SurveyStatus = "draft"
@@ -78,6 +82,7 @@ class SurveyUpdate(BaseModel):
     author_id: int | None = Field(default=None, gt=0)
     title: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
+    image_url: str | None = None
     category: str | None = Field(default=None, min_length=1, max_length=64)
     questions: list[SurveyQuestion] | None = Field(default=None, min_length=1)
     status: SurveyStatus | None = None
@@ -119,6 +124,7 @@ class AnswerCreate(BaseModel):
     survey_id: int = Field(..., gt=0)
     respondent_id: int = Field(..., gt=0)
     answers: list[AnswerItem] = Field(..., min_length=1)
+    duration_seconds: float | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def validate_unique_answers(self) -> AnswerCreate:
@@ -143,3 +149,52 @@ class AnswerRead(BaseModel):
 class AnswerCountRead(BaseModel):
     survey_id: int
     answers_count: int
+
+
+class PopularSurveyRead(BaseModel):
+    survey_id: int
+    title: str
+    answers_count: int
+
+
+class RecommendedSurveyRead(SurveyRead):
+    pass
+
+
+class PaginationRequest(BaseModel):
+    limit: int = Field(default=10, ge=1, le=100)
+    offset: int = Field(default=0, ge=0)
+
+
+class SurveySearchFilter(BaseModel):
+    category: str | None = None
+    status: SurveyStatus | None = None
+    author_id: int | None = Field(default=None, gt=0)
+
+    @field_validator("category")
+    @classmethod
+    def normalize_category_value(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_category(value)
+
+
+class SurveySearchRequest(BaseModel):
+    filter: SurveySearchFilter = Field(default_factory=SurveySearchFilter)
+    pagination: PaginationRequest = Field(default_factory=PaginationRequest)
+
+
+class PopularSurveysRequest(BaseModel):
+    limit: int = Field(default=10, ge=1, le=100)
+
+
+class SurveyRecommendationsRequest(BaseModel):
+    category: str | None = None
+    limit: int = Field(default=10, ge=1, le=100)
+
+    @field_validator("category")
+    @classmethod
+    def normalize_category_value(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_category(value)
