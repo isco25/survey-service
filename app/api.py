@@ -88,6 +88,6 @@ def _resolve_error_code(status_code: int) -> str:
         status.HTTP_403_FORBIDDEN: "ForbiddenHttpException",
         status.HTTP_404_NOT_FOUND: "NotFoundHttpException",
         status.HTTP_409_CONFLICT: "ConflictHttpException",
-        status.HTTP_422_UNPROCESSABLE_CONTENT: "ValidationHttpException",
+        status.HTTP_422_UNPROCESSABLE_ENTITY: "ValidationHttpException",
         status.HTTP_500_INTERNAL_SERVER_ERROR: "InternalServerError",
     }.get(status_code, "HttpException")
